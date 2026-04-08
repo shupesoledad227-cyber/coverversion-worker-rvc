@@ -14,7 +14,14 @@ RUN pip install --no-cache-dir \
     requests \
     pedalboard \
     demucs \
-    matplotlib
+    matplotlib \
+    scipy \
+    librosa \
+    soundfile \
+    praat-parselmouth \
+    pyworld \
+    faiss-cpu \
+    torchcrepe
 
 # Install RVC package (inference)
 RUN pip install --no-cache-dir rvc || true
