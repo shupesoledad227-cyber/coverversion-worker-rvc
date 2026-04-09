@@ -21,7 +21,8 @@ RUN pip install --no-cache-dir \
     praat-parselmouth \
     pyworld \
     faiss-cpu \
-    torchcrepe
+    torchcrepe \
+    ffmpeg-python
 
 # Install RVC package (inference)
 RUN pip install --no-cache-dir rvc || true
