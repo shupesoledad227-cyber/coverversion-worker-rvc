@@ -27,8 +27,9 @@ RUN pip install --no-cache-dir \
 # Clone RVC WebUI for training functionality
 RUN git clone --depth 1 https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI.git /app/rvc-webui
 
-# Install ALL WebUI deps (skip only torch/torchvision/torchaudio to keep base image versions)
-RUN grep -v -E "^torch==|^torchvision==|^torchaudio==" /app/rvc-webui/requirements.txt > /tmp/rvc_reqs.txt \
+# Install WebUI deps (skip torch + incompatible version-locked packages for py3.11)
+RUN grep -v -E "^torch==|^torchvision==|^torchaudio==|^numba==|^llvmlite==|^numpy==" /app/rvc-webui/requirements.txt > /tmp/rvc_reqs.txt \
+    && pip install --no-cache-dir numba librosa \
     && pip install --no-cache-dir -r /tmp/rvc_reqs.txt
 
 # Install rvc package for inference
