@@ -38,26 +38,28 @@ RUN grep -v -E "^torch==|^torchvision==|^torchaudio==|^numba==|^llvmlite==|^nump
 # Use One-sixth's patched fork (community verified fix)
 RUN pip install --no-cache-dir git+https://github.com/One-sixth/fairseq.git
 
-# Download RMVPE model for F0 extraction (both locations for compatibility)
-RUN mkdir -p /app/rvc-webui/assets/rmvpe && \
-    python -c "\
-from huggingface_hub import hf_hub_download; \
-hf_hub_download('lj1995/VoiceConversionWebUI', 'rmvpe.pt', local_dir='/app/rvc-webui/assets/rmvpe'); \
-import shutil; shutil.copy('/app/rvc-webui/assets/rmvpe/rmvpe.pt', '/app/rvc-webui/rmvpe.pt'); \
-print('RMVPE downloaded')" || echo "RMVPE download skipped"
+# Download models using wget (more reliable than huggingface_hub in build)
+RUN mkdir -p /app/rvc-webui/assets/rmvpe \
+    /app/rvc-webui/assets/hubert \
+    /app/rvc-webui/assets/pretrained_v2
 
-# Download HuBERT model
-RUN mkdir -p /app/rvc-webui/assets/hubert && \
-    python -c "\
-from huggingface_hub import hf_hub_download; \
-hf_hub_download('lj1995/VoiceConversionWebUI', 'hubert_base.pt', local_dir='/app/rvc-webui/assets/hubert'); \
-print('HuBERT downloaded')" || echo "HuBERT download skipped"
+# RMVPE (F0 extraction)
+RUN wget -q -O /app/rvc-webui/assets/rmvpe/rmvpe.pt \
+    "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.pt" \
+    && cp /app/rvc-webui/assets/rmvpe/rmvpe.pt /app/rvc-webui/rmvpe.pt \
+    && echo "RMVPE downloaded"
 
-# Download pretrained v2 models
-RUN python -c "\
-from huggingface_hub import snapshot_download; \
-snapshot_download('lj1995/VoiceConversionWebUI', local_dir='/app/rvc-webui/assets', allow_patterns=['pretrained_v2/*']); \
-print('Pretrained v2 downloaded')" || echo "Pretrained v2 download skipped"
+# HuBERT (feature extraction)
+RUN wget -q -O /app/rvc-webui/assets/hubert/hubert_base.pt \
+    "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/hubert_base.pt" \
+    && echo "HuBERT downloaded"
+
+# Pretrained v2 models (training base)
+RUN wget -q -O /app/rvc-webui/assets/pretrained_v2/f0G48k.pth \
+    "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/pretrained_v2/f0G48k.pth" \
+    && wget -q -O /app/rvc-webui/assets/pretrained_v2/f0D48k.pth \
+    "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/pretrained_v2/f0D48k.pth" \
+    && echo "Pretrained v2 downloaded"
 
 # Install rvc package for inference
 RUN pip install --no-cache-dir rvc || true

@@ -139,15 +139,18 @@ def handle_train(job_input, tmpdir):
     exp_dir = os.path.join(webui, "logs", model_name)
     os.makedirs(exp_dir, exist_ok=True)
 
-    def run_step(step_name, cmd):
+    def run_step(step_name, cmd, timeout_sec=300):
         print(f"[Train] {step_name}...")
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=webui)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec, cwd=webui)
         if r.stdout:
-            print(f"[Train] {step_name} STDOUT: {r.stdout[-300:]}")
+            print(f"[Train] {step_name} STDOUT: {r.stdout[-500:]}")
         if r.stderr:
-            print(f"[Train] {step_name} STDERR: {r.stderr[-200:]}")
+            print(f"[Train] {step_name} STDERR: {r.stderr[-300:]}")
+        # Check both return code and error keywords in output
         if r.returncode != 0:
             raise RuntimeError(f"{step_name} failed: {r.stderr[-300:]}")
+        if "is shut down" in (r.stdout or "") or "does not exist" in (r.stdout or ""):
+            raise RuntimeError(f"{step_name} failed: {r.stdout[-300:]}")
         print(f"[Train] {step_name} done")
 
     # Step 1: Preprocess
@@ -189,7 +192,7 @@ def handle_train(job_input, tmpdir):
         "-c", "0",
         "-sw", "1",
         "-v", "v2",
-    ])
+    ], timeout_sec=600)
 
     # 5. Find and copy trained model to volume
     logs_dir = os.path.join("/app/rvc-webui/logs", model_name)
