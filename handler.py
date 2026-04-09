@@ -165,23 +165,27 @@ def handle_train(job_input, tmpdir):
     ])
 
     # Step 3: Extract features
+    # Official args: device, leng(total_procs), idx(proc_index), n_g(gpu_id), logs_path, version, is_half
     run_step("Extract Features", [
         "python", "infer/modules/train/extract_feature_print.py",
-        "cuda:0", "1", "0", "0", exp_dir, "v2",
+        "cuda:0", "1", "0", "0", exp_dir, "v2", "True",
     ])
 
     # Step 4: Train model
+    # Official: -e name -sr sr -f0 1 -bs batch -g gpus -te epochs -se save -pg G.pth -pd D.pth -l save_latest -c cache_gpu -sw save_weights -v version
+    sr_key = "48k" if sample_rate >= 48000 else ("40k" if sample_rate >= 40000 else "32k")
     run_step("Train", [
         "python", "infer/modules/train/train.py",
         "-e", model_name,
-        "-sr", str(sample_rate),
+        "-sr", sr_key,
         "-f0", "1",
         "-bs", str(batch_size),
+        "-g", "0",
         "-te", str(epochs),
         "-se", "50",
-        "-pg", "assets/pretrained_v2/f0G48k.pth",
-        "-pd", "assets/pretrained_v2/f0D48k.pth",
-        "-l", "0",
+        "-pg", f"assets/pretrained_v2/f0G{sr_key}.pth",
+        "-pd", f"assets/pretrained_v2/f0D{sr_key}.pth",
+        "-l", "1",
         "-c", "0",
         "-sw", "1",
         "-v", "v2",
