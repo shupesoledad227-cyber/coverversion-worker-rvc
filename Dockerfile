@@ -27,10 +27,12 @@ RUN pip install --no-cache-dir \
 # Clone RVC WebUI for training functionality
 RUN git clone --depth 1 https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI.git /app/rvc-webui
 
-# Install WebUI deps (skip torch + incompatible version-locked packages for py3.11)
-RUN grep -v -E "^torch==|^torchvision==|^torchaudio==|^numba==|^llvmlite==|^numpy==" /app/rvc-webui/requirements.txt > /tmp/rvc_reqs.txt \
+# Install WebUI deps (skip problematic version-locked packages)
+RUN grep -v -E "^torch==|^torchvision==|^torchaudio==|^numba==|^llvmlite==|^numpy==|^fairseq==|^faiss-cpu==|^gradio==|^fastapi==|^ffmpy==|^torchcrepe==|^pyworld==" /app/rvc-webui/requirements.txt > /tmp/rvc_reqs.txt \
     && pip install --no-cache-dir numba librosa \
-    && pip install --no-cache-dir -r /tmp/rvc_reqs.txt
+    && pip install --no-cache-dir -r /tmp/rvc_reqs.txt || true \
+    && pip install --no-cache-dir fairseq --no-deps || true \
+    && pip install --no-cache-dir omegaconf hydra-core av pydub tensorboardX
 
 # Install rvc package for inference
 RUN pip install --no-cache-dir rvc || true
