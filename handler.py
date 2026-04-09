@@ -134,64 +134,56 @@ def handle_train(job_input, tmpdir):
 
     model_name = f"rvc_{user_id}"
 
-    # 4. Use RVC WebUI's internal training pipeline via subprocess script
-    train_script = f"""
-import sys, os
-sys.path.insert(0, '/app/rvc-webui')
-os.chdir('/app/rvc-webui')
+    # 4. Training pipeline — all steps via subprocess (RVC scripts use sys.argv)
+    webui = RVC_WEBUI_DIR
+    exp_dir = os.path.join(webui, "logs", model_name)
+    os.makedirs(exp_dir, exist_ok=True)
 
-from infer.modules.train.preprocess import PreProcess
-from infer.modules.train.extract.extract_f0_rmvpe import FeatureInput
-import traceback
+    def run_step(step_name, cmd):
+        print(f"[Train] {step_name}...")
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=webui)
+        if r.stdout:
+            print(f"[Train] {step_name} STDOUT: {r.stdout[-300:]}")
+        if r.stderr:
+            print(f"[Train] {step_name} STDERR: {r.stderr[-200:]}")
+        if r.returncode != 0:
+            raise RuntimeError(f"{step_name} failed: {r.stderr[-300:]}")
+        print(f"[Train] {step_name} done")
 
-model_name = '{model_name}'
-sr = {sample_rate}
-dataset = '{dataset_dir}'
-exp_dir = os.path.join('logs', model_name)
-os.makedirs(exp_dir, exist_ok=True)
-
-try:
     # Step 1: Preprocess
-    print('[Train] Preprocessing...')
-    from infer.modules.train import preprocess
-    preprocess.preprocess_trainset(dataset, sr, 2, exp_dir)
-    print('[Train] Preprocess done')
+    run_step("Preprocess", [
+        "python", "infer/modules/train/preprocess.py",
+        dataset_dir, str(sample_rate), "2", exp_dir, "3.7", "True",
+    ])
 
-    # Step 2: Extract f0
-    print('[Train] Extracting f0...')
-    os.system(f'python infer/modules/train/extract_f0_print.py {{exp_dir}} {{sr}} 1')
-    print('[Train] F0 extraction done')
+    # Step 2: Extract F0
+    run_step("Extract F0", [
+        "python", "infer/modules/train/extract_f0_print.py",
+        exp_dir, str(sample_rate), "1",
+    ])
 
     # Step 3: Extract features
-    print('[Train] Extracting features...')
-    os.system(f'python infer/modules/train/extract_feature_print.py cuda:0 1 0 0 {{exp_dir}} v2')
-    print('[Train] Feature extraction done')
+    run_step("Extract Features", [
+        "python", "infer/modules/train/extract_feature_print.py",
+        "cuda:0", "1", "0", "0", exp_dir, "v2",
+    ])
 
-    # Step 4: Train
-    print('[Train] Training {epochs} epochs...')
-    os.system(f'python infer/modules/train/train.py -e {{model_name}} -sr {{sr}} -f0 1 -bs {batch_size} -te {epochs} -se 50 -pg assets/pretrained_v2/f0G48k.pth -pd assets/pretrained_v2/f0D48k.pth -l 0 -c 0 -sw 1 -v v2')
-    print('[Train] Training done')
-
-except Exception as e:
-    print(f'[Train] Error: {{e}}')
-    traceback.print_exc()
-    sys.exit(1)
-"""
-    script_path = os.path.join(tmpdir, "train_rvc.py")
-    with open(script_path, "w") as f:
-        f.write(train_script)
-
-    print("[Train] Running training pipeline...")
-    result = subprocess.run(
-        ["python", script_path],
-        capture_output=True, text=True, timeout=600,
-        env={**os.environ, "PYTHONPATH": f"/app/rvc-webui:{os.environ.get('PYTHONPATH', '')}"},
-    )
-    print(f"[Train] STDOUT: {result.stdout[-500:]}")
-    if result.stderr:
-        print(f"[Train] STDERR: {result.stderr[-300:]}")
-    if result.returncode != 0:
-        raise RuntimeError(f"Train failed: {result.stderr[-300:]}")
+    # Step 4: Train model
+    run_step("Train", [
+        "python", "infer/modules/train/train.py",
+        "-e", model_name,
+        "-sr", str(sample_rate),
+        "-f0", "1",
+        "-bs", str(batch_size),
+        "-te", str(epochs),
+        "-se", "50",
+        "-pg", "assets/pretrained_v2/f0G48k.pth",
+        "-pd", "assets/pretrained_v2/f0D48k.pth",
+        "-l", "0",
+        "-c", "0",
+        "-sw", "1",
+        "-v", "v2",
+    ])
 
     # 5. Find and copy trained model to volume
     logs_dir = os.path.join("/app/rvc-webui/logs", model_name)
