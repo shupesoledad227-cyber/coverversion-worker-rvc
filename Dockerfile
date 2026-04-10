@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir \
     requests \
     pedalboard \
     demucs \
-    matplotlib \
+    matplotlib==3.7.5 \
     scipy \
     librosa \
     soundfile \
