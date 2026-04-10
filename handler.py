@@ -174,9 +174,22 @@ def handle_train(job_input, tmpdir):
         "cuda:0", "1", "0", "0", exp_dir, "v2", "True",
     ])
 
+    # Step 3.5: Generate config.json (required by train.py, normally done by click_train in WebUI)
+    import json as _json
+    sr_key = "48k" if sample_rate >= 48000 else ("40k" if sample_rate >= 40000 else "32k")
+    config_path = os.path.join(webui, "configs", "v2", f"{sr_key}.json")
+    config_save = os.path.join(exp_dir, "config.json")
+    if os.path.exists(config_path) and not os.path.exists(config_save):
+        with open(config_path, "r") as cf:
+            cfg_data = _json.load(cf)
+        with open(config_save, "w") as cf:
+            _json.dump(cfg_data, cf, indent=4, sort_keys=True)
+        print(f"[Train] config.json created from {config_path}")
+    else:
+        print(f"[Train] config.json: exists={os.path.exists(config_save)}, template={os.path.exists(config_path)}")
+
     # Step 4: Train model
     # Official: -e name -sr sr -f0 1 -bs batch -g gpus -te epochs -se save -pg G.pth -pd D.pth -l save_latest -c cache_gpu -sw save_weights -v version
-    sr_key = "48k" if sample_rate >= 48000 else ("40k" if sample_rate >= 40000 else "32k")
     run_step("Train", [
         "python", "infer/modules/train/train.py",
         "-e", model_name,
