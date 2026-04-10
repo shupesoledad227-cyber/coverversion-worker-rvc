@@ -356,25 +356,40 @@ def handle_infer(job_input, tmpdir):
     if not os.path.exists(vocals_path):
         raise RuntimeError("Vocal separation failed")
 
-    # 4. RVC inference using rvc-python or rvc package
+    # 4. RVC inference — use RVC WebUI's own VC class (not the broken pypi 'rvc' pkg)
+    # VC.get_vc() looks for models in /app/rvc-webui/assets/weights/, so copy ours in.
     print("[Infer] Running RVC inference...")
+    weights_dir = os.path.join(RVC_WEBUI_DIR, "assets", "weights")
+    os.makedirs(weights_dir, exist_ok=True)
+    model_basename = f"rvc_{user_id}.pth"
+    shutil.copy(model_path, os.path.join(weights_dir, model_basename))
+    has_index = os.path.exists(index_path)
+    if has_index:
+        # VC.get_vc auto-finds .index inside logs/{exp}/ — give it an absolute path via file_index
+        index_arg = index_path
+    else:
+        index_arg = ""
+
     output_wav = os.path.join(tmpdir, "rvc_output.wav")
 
     infer_script = f"""
-import sys
+import sys, os
+sys.path.insert(0, '/app/rvc-webui')
+os.chdir('/app/rvc-webui')
 try:
-    from rvc.modules.vc.modules import VC
-    from pathlib import Path
+    from configs.config import Config
+    from infer.modules.vc.modules import VC
     from scipy.io import wavfile
 
-    vc = VC()
-    vc.get_vc('{model_path}')
+    config = Config()
+    vc = VC(config)
+    vc.get_vc('{model_basename}')
     tgt_sr, audio_opt, times, _ = vc.vc_single(
         sid=0,
-        input_audio_path=Path('{vocals_path}'),
+        input_audio_path='{vocals_path}',
         f0_up_key={pitch_shift},
         f0_method='rmvpe',
-        index_file='{index_path}' if '{index_path}' and __import__('os').path.exists('{index_path}') else '',
+        file_index='{index_arg}',
         index_rate={index_rate},
         filter_radius={filter_radius},
         protect=0.33,
@@ -394,7 +409,9 @@ except Exception as e:
     result = subprocess.run(["python", script_path], capture_output=True, text=True, timeout=300)
     infer_time = time.time() - start
 
-    print(f"[Infer] STDOUT: {result.stdout[-300:]}")
+    print(f"[Infer] STDOUT: {result.stdout[-500:]}")
+    if result.stderr:
+        print(f"[Infer] STDERR: {result.stderr[-500:]}")
     if result.returncode != 0:
         raise RuntimeError(f"RVC inference failed: {result.stderr[-300:]}")
 

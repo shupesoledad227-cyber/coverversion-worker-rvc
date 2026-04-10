@@ -61,9 +61,6 @@ RUN wget -q -O /app/rvc-webui/assets/pretrained_v2/f0G48k.pth \
     "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/pretrained_v2/f0D48k.pth" \
     && echo "Pretrained v2 downloaded"
 
-# Install rvc package for inference
-RUN pip install --no-cache-dir rvc || true
-
 # Pre-generate matplotlib font cache
 RUN python -c "import matplotlib; print('Font cache generated')" || true
 
