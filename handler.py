@@ -115,7 +115,7 @@ def handle_train(job_input, tmpdir):
     voice_url = job_input["voice_url"]
     sample_rate = int(job_input.get("sample_rate", 48000))
     epochs = int(job_input.get("epochs", 200))
-    batch_size = int(job_input.get("batch_size", 8))
+    batch_size = int(job_input.get("batch_size", 4))
 
     print(f"[Train] user_id={user_id}, sr={sample_rate}, epochs={epochs}, batch={batch_size}")
 
@@ -140,18 +140,21 @@ def handle_train(job_input, tmpdir):
     os.makedirs(exp_dir, exist_ok=True)
 
     def run_step(step_name, cmd, timeout_sec=300):
-        print(f"[Train] {step_name}...")
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec, cwd=webui)
-        if r.stdout:
-            print(f"[Train] {step_name} STDOUT: {r.stdout[-500:]}")
-        if r.stderr:
-            print(f"[Train] {step_name} STDERR: {r.stderr[-300:]}")
+        print(f"[Train] {step_name}...", flush=True)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec, cwd=webui,
+                           env={**os.environ, "PYTHONUNBUFFERED": "1"})
+        stdout = r.stdout or ""
+        stderr = r.stderr or ""
+        if stdout:
+            print(f"[Train] {step_name} STDOUT: {stdout[-500:]}", flush=True)
+        if stderr:
+            print(f"[Train] {step_name} STDERR: {stderr[-300:]}", flush=True)
         # Check both return code and error keywords in output
         if r.returncode != 0:
-            raise RuntimeError(f"{step_name} failed: {r.stderr[-300:]}")
-        if "is shut down" in (r.stdout or "") or "does not exist" in (r.stdout or ""):
-            raise RuntimeError(f"{step_name} failed: {r.stdout[-300:]}")
-        print(f"[Train] {step_name} done")
+            raise RuntimeError(f"{step_name} failed (exit {r.returncode}): {stderr[-300:]}")
+        if "is shut down" in stdout or "does not exist" in stdout:
+            raise RuntimeError(f"{step_name} failed: {stdout[-300:]}")
+        print(f"[Train] {step_name} done", flush=True)
 
     # Step 1: Preprocess
     # Args: inp_root, sr, n_p, exp_dir, per, noparallel
