@@ -240,6 +240,41 @@ def handle_train(job_input, tmpdir):
         f.write("\n".join(opt))
     print(f"[Train] filelist.txt written: {len(opt)} entries → {filelist_path}")
 
+    # Step 3.7: Build FAISS index for retrieval (makes index_rate work during inference)
+    index_script = f"""
+import sys, os, numpy as np, faiss
+sys.path.insert(0, '{webui}')
+
+feature_dir = os.path.join('{exp_dir}', '3_feature768')
+npys = []
+for f in sorted(os.listdir(feature_dir)):
+    if f.endswith('.npy'):
+        feat = np.load(os.path.join(feature_dir, f))
+        npys.append(feat)
+if npys:
+    big_npy = np.concatenate(npys, axis=0)
+    print(f'Total feature vectors: {{big_npy.shape}}')
+    n_ivf = min(int(16 * np.sqrt(big_npy.shape[0])), big_npy.shape[0] // 39)
+    n_ivf = max(n_ivf, 1)
+    index = faiss.index_factory(768, f'IVF{{n_ivf}},Flat')
+    index.train(big_npy)
+    index.add(big_npy)
+    index_path = os.path.join('{exp_dir}', 'added_index.index')
+    faiss.write_index(index, index_path)
+    print(f'Index saved: {{index_path}} ({{big_npy.shape[0]}} vectors, IVF{{n_ivf}})')
+else:
+    print('No feature files found, skipping index')
+"""
+    index_script_path = os.path.join(tmpdir, "build_index.py")
+    with open(index_script_path, "w") as f:
+        f.write(index_script)
+    ir = subprocess.run(["python", index_script_path], capture_output=True, text=True, timeout=120, cwd=webui)
+    print(f"[Train] Index STDOUT: {ir.stdout.strip()}")
+    if ir.stderr:
+        print(f"[Train] Index STDERR: {ir.stderr[-200:]}")
+    if ir.returncode != 0:
+        print(f"[Train] Index build failed (non-critical): {ir.stderr[-200:]}")
+
     # Step 4: Train model
     # Official: -e name -sr sr -f0 1 -bs batch -g gpus -te epochs -se save -pg G.pth -pd D.pth -l save_latest -c cache_gpu -sw save_weights -v version
     run_step("Train", [
