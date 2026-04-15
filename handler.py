@@ -322,6 +322,104 @@ print(f'extract_small_model: {{result}}')
     }
 
 
+# ── BS Roformer + Karaoke separation ─────────────────────────────
+
+def separate_vocals_bs_roformer(song_path: str, output_dir: str):
+    """Separate vocals/instrumental using BS Roformer (SDR 10.87)."""
+    print(f"[BS-Roformer] Separating vocals...")
+    os.makedirs(output_dir, exist_ok=True)
+    bsr_input = os.path.join(output_dir, "_input")
+    os.makedirs(bsr_input, exist_ok=True)
+    shutil.copy(song_path, os.path.join(bsr_input, os.path.basename(song_path)))
+    bsr_output = os.path.join(output_dir, "_output")
+    os.makedirs(bsr_output, exist_ok=True)
+
+    cmd = [
+        "python", "/app/msst/inference.py",
+        "--model_type", "bs_roformer",
+        "--config_path", "/app/msst/bs_roformer_vocals.yaml",
+        "--start_check_point", "/app/msst/bs_roformer_vocals.ckpt",
+        "--input_folder", bsr_input,
+        "--store_dir", bsr_output,
+        "--extract_instrumental",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd="/app/msst")
+    if result.stdout:
+        print(f"[BS-Roformer] STDOUT: {result.stdout[-300:]}")
+    if result.returncode != 0:
+        raise RuntimeError(f"BS-Roformer failed: {result.stderr[-300:]}")
+
+    vocals_path = None
+    instrumental_path = None
+    for root, dirs, files in os.walk(bsr_output):
+        for f in files:
+            if not f.endswith('.wav'):
+                continue
+            lower = f.lower()
+            full = os.path.join(root, f)
+            if 'vocal' in lower and 'instrumental' not in lower and 'other' not in lower:
+                vocals_path = full
+            elif 'instrumental' in lower or 'other' in lower:
+                instrumental_path = full
+
+    if not vocals_path or not instrumental_path:
+        all_files = []
+        for root, dirs, files in os.walk(bsr_output):
+            for f in files:
+                all_files.append(os.path.relpath(os.path.join(root, f), bsr_output))
+        raise RuntimeError(f"BS-Roformer output not found in: {all_files}")
+
+    print(f"[BS-Roformer] Done.")
+    return vocals_path, instrumental_path
+
+
+def separate_karaoke(vocals_path: str, output_dir: str):
+    """Separate lead vocals from backing vocals using BS Roformer Karaoke."""
+    print(f"[Karaoke] Separating lead/backing vocals...")
+    os.makedirs(output_dir, exist_ok=True)
+    karaoke_input = os.path.join(output_dir, "input")
+    os.makedirs(karaoke_input, exist_ok=True)
+    shutil.copy(vocals_path, os.path.join(karaoke_input, os.path.basename(vocals_path)))
+
+    cmd = [
+        "python", "/app/msst/inference.py",
+        "--model_type", "bs_roformer",
+        "--config_path", "/app/msst/config_karaoke_frazer_becruily.yaml",
+        "--start_check_point", "/app/msst/bs_roformer_karaoke_frazer_becruily.ckpt",
+        "--input_folder", karaoke_input,
+        "--store_dir", output_dir,
+        "--extract_instrumental",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd="/app/msst")
+    if result.stdout:
+        print(f"[Karaoke] STDOUT: {result.stdout[-300:]}")
+    if result.returncode != 0:
+        raise RuntimeError(f"Karaoke failed: {result.stderr[-300:]}")
+
+    lead_path = None
+    backing_path = None
+    for root, dirs, files in os.walk(output_dir):
+        for f in files:
+            if not f.endswith('.wav'):
+                continue
+            full = os.path.join(root, f)
+            lower = f.lower()
+            if 'instrumental' in lower or 'other' in lower:
+                backing_path = full
+            elif 'vocal' in lower:
+                lead_path = full
+
+    if not lead_path:
+        all_files = []
+        for root, dirs, files in os.walk(output_dir):
+            for f in files:
+                all_files.append(os.path.relpath(os.path.join(root, f), output_dir))
+        raise RuntimeError(f"Karaoke lead vocals not found in: {all_files}")
+
+    print(f"[Karaoke] Done.")
+    return lead_path, backing_path
+
+
 # ── INFER MODE ───────────────────────────────────────────────────
 
 def handle_infer(job_input, tmpdir):
@@ -340,8 +438,10 @@ def handle_infer(job_input, tmpdir):
     output_format = job_input.get("output_format", "mp3_192")
     cover_image = job_input.get("cover_image", "")
     task_id = job_input.get("task_id", "unknown")
+    separation_engine = job_input.get("separation_engine", "demucs")
+    karaoke_enabled = bool(job_input.get("karaoke_enabled", False))
 
-    print(f"[Infer] user_id={user_id}, pitch={pitch_shift}, index_rate={index_rate}")
+    print(f"[Infer] user_id={user_id}, pitch={pitch_shift}, index_rate={index_rate}, sep={separation_engine}, karaoke={karaoke_enabled}")
 
     # 1. Check model exists
     model_dir = os.path.join(MODELS_DIR, user_id)
@@ -355,26 +455,42 @@ def handle_infer(job_input, tmpdir):
     song_path = os.path.join(tmpdir, "song.wav")
     download_file(song_url, song_path)
 
-    # 3. Separate vocals (using demucs)
-    print("[Infer] Separating vocals...")
-    demucs_out = os.path.join(tmpdir, "demucs_out")
-    demucs_cmd = [
-        "python", "-m", "demucs",
-        "-n", "htdemucs_ft",
-        "--two-stems", "vocals",
-        "-o", demucs_out,
-        song_path,
-    ]
-    result = subprocess.run(demucs_cmd, capture_output=True, text=True, timeout=300)
-    if result.returncode != 0:
-        raise RuntimeError(f"Demucs failed: {result.stderr[-300:]}")
+    # 3. Separate vocals
+    t = time.time()
+    if separation_engine == "bs_roformer":
+        vocals_path, instrumental_path = separate_vocals_bs_roformer(
+            song_path, os.path.join(tmpdir, "bsroformer_out"))
+    else:
+        print("[Infer] Separating vocals (demucs)...")
+        demucs_out = os.path.join(tmpdir, "demucs_out")
+        demucs_cmd = [
+            "python", "-m", "demucs",
+            "-n", "htdemucs",
+            "--two-stems", "vocals",
+            "-o", demucs_out,
+            song_path,
+        ]
+        result = subprocess.run(demucs_cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            raise RuntimeError(f"Demucs failed: {result.stderr[-300:]}")
+        song_name = os.path.splitext(os.path.basename(song_path))[0]
+        vocals_path = os.path.join(demucs_out, "htdemucs", song_name, "vocals.wav")
+        instrumental_path = os.path.join(demucs_out, "htdemucs", song_name, "no_vocals.wav")
+        if not os.path.exists(vocals_path):
+            raise RuntimeError("Vocal separation failed")
+    separation_time = time.time() - t
+    print(f"[Infer] Separation ({separation_engine}): {separation_time:.1f}s")
 
-    song_name = os.path.splitext(os.path.basename(song_path))[0]
-    vocals_path = os.path.join(demucs_out, "htdemucs_ft", song_name, "vocals.wav")
-    instrumental_path = os.path.join(demucs_out, "htdemucs_ft", song_name, "no_vocals.wav")
-
-    if not os.path.exists(vocals_path):
-        raise RuntimeError("Vocal separation failed")
+    # 3.5 Karaoke separation (optional)
+    backing_vocals_path = None
+    if karaoke_enabled:
+        t = time.time()
+        karaoke_out_dir = os.path.join(tmpdir, "karaoke_out")
+        lead_path, backing_path = separate_karaoke(vocals_path, karaoke_out_dir)
+        vocals_path = lead_path
+        backing_vocals_path = backing_path
+        karaoke_time = time.time() - t
+        print(f"[Infer] Karaoke: {karaoke_time:.1f}s")
 
     # 4. RVC inference — use RVC WebUI's own VC class (not the broken pypi 'rvc' pkg)
     # VC.get_vc() looks for models in /app/rvc-webui/assets/weights/, so copy ours in.
@@ -464,7 +580,23 @@ except Exception as e:
         output_wav = apply_post_fx(output_wav, vocal_volume, reverb)
 
     # 6. Mix processed vocals with original instrumental.
-    #    normalize=0 keeps original loudness instead of /N.
+    # If karaoke enabled, merge backing vocals into instrumental first
+    if karaoke_enabled and backing_vocals_path and os.path.exists(backing_vocals_path):
+        inst_with_backing = os.path.join(tmpdir, "inst_with_backing.wav")
+        merge_cmd = [
+            "ffmpeg", "-y",
+            "-i", instrumental_path,
+            "-i", backing_vocals_path,
+            "-filter_complex",
+            "[0:a][1:a]amix=inputs=2:duration=longest:weights=1 1:normalize=0",
+            "-ac", "2", "-ar", "44100",
+            inst_with_backing,
+        ]
+        subprocess.run(merge_cmd, capture_output=True, timeout=120)
+        if os.path.exists(inst_with_backing):
+            instrumental_path = inst_with_backing
+            print(f"[Infer] Backing vocals merged into instrumental")
+
     print("[Infer] Mixing...")
     final_wav = os.path.join(tmpdir, "final_cover.wav")
     mix_cmd = [

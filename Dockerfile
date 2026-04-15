@@ -64,12 +64,34 @@ RUN wget -q -O /app/rvc-webui/assets/pretrained_v2/f0G48k.pth \
 # Pre-generate matplotlib font cache
 RUN python -c "import matplotlib; print('Font cache generated')" || true
 
-# Pre-download Demucs htdemucs_ft model (~320MB)
+# Pre-download Demucs htdemucs model (~80MB)
 RUN python -c "\
 import torch; \
 from demucs.pretrained import get_model; \
-get_model('htdemucs_ft'); \
-print('htdemucs_ft model downloaded')"
+get_model('htdemucs'); \
+print('htdemucs model downloaded')"
+
+# ── MSST framework + BS Roformer + Karaoke models ──
+RUN git clone --depth 1 https://github.com/ZFTurbo/Music-Source-Separation-Training.git /app/msst
+RUN pip install --no-cache-dir \
+    ml_collections beartype==0.14.1 rotary-embedding-torch==0.3.5 \
+    einops==0.8.1 segmentation_models_pytorch==0.3.3 timm==0.9.2 \
+    omegaconf wandb loralib spafe==0.3.2 auraloss torchseg \
+    prodigyopt hyper_connections==0.1.11 torch_log_wmse torch_l1_snr
+
+# BS Roformer vocals (SDR 10.87)
+RUN wget -q -O /app/msst/bs_roformer_vocals.ckpt \
+    "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/model_bs_roformer_ep_317_sdr_12.9755.ckpt" \
+    && wget -q -O /app/msst/bs_roformer_vocals.yaml \
+    "https://raw.githubusercontent.com/ZFTurbo/Music-Source-Separation-Training/main/configs/viperx/model_bs_roformer_ep_317_sdr_12.9755.yaml" \
+    && echo "BS Roformer vocals downloaded"
+
+# Karaoke model (lead/backing separation)
+RUN wget -q -O /app/msst/bs_roformer_karaoke_frazer_becruily.ckpt \
+    "https://huggingface.co/becruily/bs-roformer-karaoke/resolve/main/bs_roformer_karaoke_frazer_becruily.ckpt" \
+    && wget -q -O /app/msst/config_karaoke_frazer_becruily.yaml \
+    "https://huggingface.co/becruily/bs-roformer-karaoke/resolve/main/config_karaoke_frazer_becruily.yaml" \
+    && echo "Karaoke model downloaded"
 
 # Create volume mount point
 RUN mkdir -p /runpod-volume/rvc_models
