@@ -73,6 +73,15 @@ def apply_post_fx(audio_path: str, vocal_volume: float = 1.3, reverb_amount: flo
             sr = f.samplerate
             audio = f.read(f.frames)
 
+        # Fade-in/out to prevent start/end pops (same as Seed-VC)
+        fade_samples = int(sr * 0.5)  # 500ms
+        if audio.shape[-1] > fade_samples * 2:
+            fade_in = np.linspace(0, 1, fade_samples)
+            fade_out = np.linspace(1, 0, fade_samples)
+            for ch in range(audio.shape[0]):
+                audio[ch, :fade_samples] *= fade_in
+                audio[ch, -fade_samples:] *= fade_out
+
         effects = [
             HighpassFilter(cutoff_frequency_hz=80),
             Compressor(threshold_db=-20, ratio=3.0, attack_ms=10, release_ms=100),
