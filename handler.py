@@ -132,16 +132,43 @@ def handle_train(job_input, tmpdir):
     sample_rate = int(job_input.get("sample_rate", 48000))
     epochs = int(job_input.get("epochs", 200))
     batch_size = int(job_input.get("batch_size", 4))
+    separate_for_training = bool(job_input.get("separate_for_training", False))  # 上传素材带伴奏时开启
 
-    print(f"[Train] user_id={user_id}, sr={sample_rate}, epochs={epochs}, batch={batch_size}, files={len(voice_urls)}")
+    print(f"[Train] user_id={user_id}, sr={sample_rate}, epochs={epochs}, batch={batch_size}, files={len(voice_urls)}, separate={separate_for_training}")
 
     # 1. Prepare dataset directory and download all voice files
+    download_dir = os.path.join(tmpdir, "downloaded")
+    os.makedirs(download_dir, exist_ok=True)
+    for i, url in enumerate(voice_urls):
+        dst = os.path.join(download_dir, f"voice_{i:02d}.wav")
+        download_file(url, dst)
+    print(f"[Train] Downloaded {len(voice_urls)} voice file(s)")
+
+    # 1.5 Optional: Run vocal separation if user uploaded songs with backing music
     dataset_dir = os.path.join(tmpdir, "dataset")
     os.makedirs(dataset_dir, exist_ok=True)
-    for i, url in enumerate(voice_urls):
-        dst = os.path.join(dataset_dir, f"voice_{i:02d}.wav")
-        download_file(url, dst)
-    print(f"[Train] Downloaded {len(voice_urls)} voice file(s) to {dataset_dir}")
+    if separate_for_training:
+        print(f"[Train] Separating vocals from training audio (BS Roformer)...")
+        for i, fname in enumerate(sorted(os.listdir(download_dir))):
+            if not fname.endswith('.wav'):
+                continue
+            src = os.path.join(download_dir, fname)
+            sep_out = os.path.join(tmpdir, f"sep_out_{i:02d}")
+            try:
+                vocals_path, _ = separate_vocals_bs_roformer(src, sep_out)
+                # Copy clean vocals to dataset dir with original name
+                dst = os.path.join(dataset_dir, fname)
+                shutil.copy(vocals_path, dst)
+                print(f"[Train] Separated {fname} → clean vocals")
+            except Exception as e:
+                print(f"[Train] Separation failed for {fname}: {e}, using original")
+                shutil.copy(src, os.path.join(dataset_dir, fname))
+        print(f"[Train] Vocal separation done for training data")
+    else:
+        # No separation — copy as-is
+        for fname in sorted(os.listdir(download_dir)):
+            if fname.endswith('.wav'):
+                shutil.copy(os.path.join(download_dir, fname), os.path.join(dataset_dir, fname))
 
     # 3. Model output directory
     model_dir = os.path.join(MODELS_DIR, user_id)
