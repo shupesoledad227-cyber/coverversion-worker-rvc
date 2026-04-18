@@ -759,7 +759,7 @@ def handler(job):
             "has_index": os.path.exists(index_path),
         }
 
-    # Package trained model as zip and return download URL (for Replicate / 第三方 RVC 平台)
+    # Package trained model as zip and upload to HuggingFace (permanent URL for Replicate)
     if mode == "download_model":
         user_id = job_input.get("user_id", "").strip()
         if not user_id:
@@ -769,27 +769,42 @@ def handler(job):
         if not os.path.exists(model_path):
             return {"status": "error", "error": f"Model not found for user {user_id}"}
 
+        hf_token = os.environ.get("HF_TOKEN", "").strip()
+        hf_repo = os.environ.get("HF_REPO", "WhistleBoy/coverversion-rvc-models").strip()
+        if not hf_token:
+            return {"status": "error", "error": "HF_TOKEN env var not set on this endpoint"}
+
         import zipfile
         with tempfile.TemporaryDirectory() as ztmpdir:
             zip_name = f"rvc_{user_id}.zip"
             zip_path = os.path.join(ztmpdir, zip_name)
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                # Replicate / AICoverGen 期望文件命名一致：model.pth + model.index
                 zf.write(model_path, arcname=f"{user_id}.pth")
                 if os.path.exists(index_path):
                     zf.write(index_path, arcname=f"{user_id}.index")
             zip_size_mb = round(os.path.getsize(zip_path) / 1024 / 1024, 2)
-            try:
-                zip_url = upload_file(zip_path, zip_name)
-            except Exception as e:
-                return {"status": "error", "error": f"Zip upload failed: {e}"}
 
+            try:
+                from huggingface_hub import HfApi
+                api = HfApi(token=hf_token)
+                api.upload_file(
+                    path_or_fileobj=zip_path,
+                    path_in_repo=zip_name,
+                    repo_id=hf_repo,
+                    repo_type="model",
+                    commit_message=f"Upload {zip_name}",
+                )
+            except Exception as e:
+                return {"status": "error", "error": f"HF upload failed: {e}"}
+
+        zip_url = f"https://huggingface.co/{hf_repo}/resolve/main/{zip_name}"
         result = {
             "status": "success",
             "user_id": user_id,
             "model_zip_url": zip_url,
             "zip_size_mb": zip_size_mb,
             "has_index": os.path.exists(index_path),
+            "hf_repo": hf_repo,
         }
         print(f"[DownloadModel] user_id={user_id} → {zip_url} ({zip_size_mb}MB)")
         return result
