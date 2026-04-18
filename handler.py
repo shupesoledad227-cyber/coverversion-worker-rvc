@@ -759,6 +759,30 @@ def handler(job):
             "has_index": os.path.exists(index_path),
         }
 
+    # Get download URLs for trained model files (.pth and .index) — uploads to tmpfiles (24h)
+    if mode == "download_model":
+        user_id = job_input.get("user_id", "").strip()
+        if not user_id:
+            return {"status": "error", "error": "user_id required"}
+        model_path = os.path.join(MODELS_DIR, user_id, "model.pth")
+        index_path = os.path.join(MODELS_DIR, user_id, "model.index")
+        if not os.path.exists(model_path):
+            return {"status": "error", "error": f"Model not found for user {user_id}"}
+        result = {"status": "success", "user_id": user_id}
+        try:
+            result["model_url"] = upload_file(model_path, f"rvc_{user_id}.pth")
+            result["model_size_mb"] = round(os.path.getsize(model_path) / 1024 / 1024, 2)
+        except Exception as e:
+            return {"status": "error", "error": f"Model upload failed: {e}"}
+        if os.path.exists(index_path):
+            try:
+                result["index_url"] = upload_file(index_path, f"rvc_{user_id}.index")
+                result["index_size_mb"] = round(os.path.getsize(index_path) / 1024 / 1024, 2)
+            except Exception as e:
+                print(f"[DownloadModel] Index upload failed (non-critical): {e}")
+        print(f"[DownloadModel] user_id={user_id} → {result.get('model_url')}")
+        return result
+
     print(f"\n{'='*60}")
     print(f"[Job] mode={mode}")
     print(f"{'='*60}")
