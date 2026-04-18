@@ -759,7 +759,7 @@ def handler(job):
             "has_index": os.path.exists(index_path),
         }
 
-    # Get download URLs for trained model files (.pth and .index) — uploads to tmpfiles (24h)
+    # Package trained model as zip and return download URL (for Replicate / 第三方 RVC 平台)
     if mode == "download_model":
         user_id = job_input.get("user_id", "").strip()
         if not user_id:
@@ -768,19 +768,30 @@ def handler(job):
         index_path = os.path.join(MODELS_DIR, user_id, "model.index")
         if not os.path.exists(model_path):
             return {"status": "error", "error": f"Model not found for user {user_id}"}
-        result = {"status": "success", "user_id": user_id}
-        try:
-            result["model_url"] = upload_file(model_path, f"rvc_{user_id}.pth")
-            result["model_size_mb"] = round(os.path.getsize(model_path) / 1024 / 1024, 2)
-        except Exception as e:
-            return {"status": "error", "error": f"Model upload failed: {e}"}
-        if os.path.exists(index_path):
+
+        import zipfile
+        with tempfile.TemporaryDirectory() as ztmpdir:
+            zip_name = f"rvc_{user_id}.zip"
+            zip_path = os.path.join(ztmpdir, zip_name)
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                # Replicate / AICoverGen 期望文件命名一致：model.pth + model.index
+                zf.write(model_path, arcname=f"{user_id}.pth")
+                if os.path.exists(index_path):
+                    zf.write(index_path, arcname=f"{user_id}.index")
+            zip_size_mb = round(os.path.getsize(zip_path) / 1024 / 1024, 2)
             try:
-                result["index_url"] = upload_file(index_path, f"rvc_{user_id}.index")
-                result["index_size_mb"] = round(os.path.getsize(index_path) / 1024 / 1024, 2)
+                zip_url = upload_file(zip_path, zip_name)
             except Exception as e:
-                print(f"[DownloadModel] Index upload failed (non-critical): {e}")
-        print(f"[DownloadModel] user_id={user_id} → {result.get('model_url')}")
+                return {"status": "error", "error": f"Zip upload failed: {e}"}
+
+        result = {
+            "status": "success",
+            "user_id": user_id,
+            "model_zip_url": zip_url,
+            "zip_size_mb": zip_size_mb,
+            "has_index": os.path.exists(index_path),
+        }
+        print(f"[DownloadModel] user_id={user_id} → {zip_url} ({zip_size_mb}MB)")
         return result
 
     print(f"\n{'='*60}")
